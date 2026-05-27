@@ -165,7 +165,7 @@ const skill = {
 			return player.countCards("h") > 0 || player.getExpansions("liebian").length > 0;
 		},
 		async cost(event, trigger, player) {
-			const heCards = player.getExpansions("liebian");
+			const heCards = player.getExpansions("liebian").sort((a, b) => get.number(a) - get.number(b));
 			const hasHand = player.countCards("h") > 0;
 			const hasHe = heCards.length > 0;
 			const choices = [];
@@ -271,6 +271,7 @@ const skill = {
 			mark(dialog, storage, player) {
 				const cards = player.getExpansions("liebian");
 				if (cards.length) {
+					cards.sort((a, b) => get.number(a) - get.number(b));
 					dialog.addSmall(cards);
 				} else {
 					return "暂无核";
@@ -371,7 +372,7 @@ const skill = {
 			let iterations = 0;
 			while (player.countCards("h") > 0 && target.countCards("h") > 0 && iterations < 20) {
 				iterations++;
-				await player.useSkill("huajiu", [target]);
+				await player.useSkill("huaquan", [target]);
 				if (player.countCards("h") === 0) {
 					await player.loseHp(1);
 					break;

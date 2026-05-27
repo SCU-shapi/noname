@@ -1,0 +1,19 @@
+dist
+output
+node_modules
+package-lock.json
+
+# IDE
+.idea/
+.vscode/
+
+# macOS
+._*
+.Spotlight-V100
+.Trashes
+.DS_Store
+.DS_Store?
+
+# Windows
+ehthumbs.db
+Thumbs.db

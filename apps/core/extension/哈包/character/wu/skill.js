@@ -500,6 +500,9 @@ const skill = {
 			result: { target: 1 },
 		},
 	},
+
+	fufeng: {
+	},
 };
 
 export default skill;

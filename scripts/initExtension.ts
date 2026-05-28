@@ -73,7 +73,9 @@ async function main() {
 		() => {
 			throw new Error(`扩展已存在: ${targetDir}`);
 		},
-		() => {}
+		(err) => {
+			if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+		}
 	);
 
 	await copyTemplateDirectory(TEMPLATE_DIR, targetDir, {

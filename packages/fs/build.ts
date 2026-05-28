@@ -58,7 +58,7 @@ async function main(platform) {
 		}
 
 		// macOS (darwin) and Linux share most steps; mac has extra codesign steps & macho segment arg
-		else if (platform === "macos") {
+		else if (platform === "darwin" || platform === "macos") {
 			copyFileSync(process.execPath, targetExe);
 
 			// remove signature (may fail on older/newer macOS; we try and warn if it fails)
@@ -83,7 +83,7 @@ async function main(platform) {
 			return;
 		} else if (platform === "linux") {
 			copyFileSync(process.execPath, targetExe);
-			run("npx", ["postject", targetExe, sentinelKey, blobPath, "--sentinel-fuse", sentinelFuse, "--macho-segment-name", "NODE_SEA"]);
+			run("npx", ["postject", targetExe, sentinelKey, blobPath, "--sentinel-fuse", sentinelFuse]);
 
 			console.log("Linux build done");
 			return;

@@ -1,5 +1,5 @@
 {
-	"exclude": ["dist", "output", "node_modules"],
+	"exclude": ["dist", "output", "node_modules", "scripts"],
 	"compilerOptions": {
 		"target": "ESNext",
 		"module": "ESNext",
@@ -8,6 +8,7 @@
 		"esModuleInterop": true,
 		"strict": true,
 		"noImplicitAny": false,
-		"allowSyntheticDefaultImports": true
+		"allowSyntheticDefaultImports": true,
+		"skipLibCheck": true
 	}
 }

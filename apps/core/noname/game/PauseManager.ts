@@ -55,12 +55,11 @@ class Deferred {
 		if (!this.isStarted) {
 			return;
 		}
-		Promise.resolve()
-			.then(() => this.#resolver && this.#resolver())
-			.then(() => {
-				this.#promise = null;
-				this.#resolver = null;
-			});
+		const resolver = this.#resolver;
+		this.#promise = null;
+		this.#resolver = null;
+		// 同步执行 resolver 以避免竞态条件：resolve 后 isStarted 立即变为 false
+		resolver?.();
 	}
 	then(onfulfilled?: ((value: void) => void | PromiseLike<void>) | null, onrejected?: ((reason: any) => never | PromiseLike<never>) | null) {
 		if (!this.#promise) {

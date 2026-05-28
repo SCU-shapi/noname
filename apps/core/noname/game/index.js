@@ -1261,12 +1261,10 @@ export class Game {
 			const history = game.getGlobalHistory(key);
 			if (last) {
 				const lastIndex = history.indexOf(last);
-				history.forEach((event, index) => {
-					if (index > lastIndex) {
-						return false;
-					}
-					return filter(event);
-				});
+				for (let i = 0; i < history.length; i++) {
+					if (i > lastIndex) break;
+					filter(history[i]);
+				}
 			} else {
 				history.forEach(filter);
 			}

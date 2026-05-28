@@ -621,7 +621,7 @@ const skill = {
 	},
 
 	zhelong: {
-		trigger: { global: "useCard" },
+		trigger: { global: ["useCard", "useSkill"] },
 		firstDo: true,
 		filter(event, player) {
 			return !player.storage._huaquan_state &&

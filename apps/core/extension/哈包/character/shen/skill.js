@@ -201,12 +201,13 @@ const skill = {
 			}
 			let hq = player.storage._huaquan_state;
 			if (!hq) {
-				hq = { target, cardsSet: [], damageBonus: false };
+				hq = { target, cardsSet: [], damageBonus: false, _shaDisabled: false };
 				player.storage._huaquan_state = hq;
 				target.storage._huaquan_state = hq;
 			}
 			if (!hq.onResolve) hq.onResolve = [];
 			if (!hq.onCleanup) hq.onCleanup = [];
+			if (!hq.onBeforeUse) hq.onBeforeUse = [];
 
 			const playerResult = await player.chooseCard("h", true, "划拳：请扣置一张手牌")
 				.set("ai", card => 6 - get.value(card))
@@ -237,25 +238,29 @@ const skill = {
 				const shaCard = pShaTargetShan ? hq.playerCard : hq.targetCard;
 				const shanCard = pShaTargetShan ? hq.targetCard : hq.playerCard;
 
-				hq.cardsSet.forEach(c => c.used = true);
+				for (const fn of hq.onBeforeUse) await fn(hq, player, target);
 
-				await shaUser.gain([shaCard], "nodelay");
-				await shanUser.gain([shanCard], "nodelay");
+				if (!hq._shaDisabled) {
+					hq.cardsSet.forEach(c => c.used = true);
 
-				game.log(shaUser, "翻开了扣置的", shaCard);
-				game.log(shanUser, "翻开了扣置的", shanCard);
+					await shaUser.gain([shaCard], "nodelay");
+					await shanUser.gain([shanCard], "nodelay");
 
-				shanUser.storage._huaquan_forced_shan = shanCard.cardid;
-				shanUser.addTempSkill("huaquan_forced_shan");
+					game.log(shaUser, "翻开了扣置的", shaCard);
+					game.log(shanUser, "翻开了扣置的", shanCard);
 
-				const useEvent = shaUser.useCard(shaCard, shanUser, false);
-				if (hq.damageBonus) useEvent.baseDamage = (useEvent.baseDamage || 1) + 1;
-				await useEvent;
+					shanUser.storage._huaquan_forced_shan = shanCard.cardid;
+					shanUser.addTempSkill("huaquan_forced_shan");
 
-				delete shanUser.storage._huaquan_forced_shan;
-				shanUser.removeSkill("huaquan_forced_shan");
+					const useEvent = shaUser.useCard(shaCard, shanUser, false);
+					if (hq.damageBonus) useEvent.baseDamage = (useEvent.baseDamage || 1) + 1;
+					await useEvent;
 
-				game.log(shanUser, "使用扣置闪响应了", shaUser, "的杀");
+					delete shanUser.storage._huaquan_forced_shan;
+					shanUser.removeSkill("huaquan_forced_shan");
+
+					game.log(shanUser, "使用扣置闪响应了", shaUser, "的杀");
+				}
 			} else {
 				const pCard = hq.playerCard;
 				const tCard = hq.targetCard;
@@ -265,11 +270,18 @@ const skill = {
 				game.log(player, "翻开了扣置的", pCardCopy);
 				const playerCanUse = pName === "sha" || player.canUse(pName, target, false);
 				if (playerCanUse) {
-					hq.cardsSet[0].used = true;
-					const useEvent = player.useCard(pCardCopy, [target], false);
-					if (pName === "sha" && tName !== "shan") useEvent.directHit = [target];
-					if (hq.damageBonus && pName === "sha") useEvent.baseDamage = (useEvent.baseDamage || 1) + 1;
-					await useEvent;
+					if (pName === "sha") {
+						for (const fn of hq.onBeforeUse) await fn(hq, player, target);
+					}
+					if (pName === "sha" && hq._shaDisabled) {
+						game.log("浮风：", player, "的杀失效");
+					} else {
+						hq.cardsSet[0].used = true;
+						const useEvent = player.useCard(pCardCopy, [target], false);
+						if (pName === "sha" && tName !== "shan") useEvent.directHit = [target];
+						if (hq.damageBonus && pName === "sha") useEvent.baseDamage = (useEvent.baseDamage || 1) + 1;
+						await useEvent;
+					}
 				} else {
 					game.log(player, "的扣置牌", pCardCopy, "无法对", target, "使用");
 					hq._playerUnusable = true;
@@ -278,11 +290,18 @@ const skill = {
 				game.log(target, "翻开了扣置的", tCardCopy);
 				const targetCanUse = tName === "sha" || target.canUse(tName, player, false);
 				if (targetCanUse) {
-					hq.cardsSet[1].used = true;
-					const useEvent = target.useCard(tCardCopy, [player], false);
-					if (tName === "sha" && pName !== "shan") useEvent.directHit = [player];
-					if (hq.damageBonus && tName === "sha") useEvent.baseDamage = (useEvent.baseDamage || 1) + 1;
-					await useEvent;
+					if (tName === "sha") {
+						for (const fn of hq.onBeforeUse) await fn(hq, player, target);
+					}
+					if (tName === "sha" && hq._shaDisabled) {
+						game.log("浮风：", target, "的杀失效");
+					} else {
+						hq.cardsSet[1].used = true;
+						const useEvent = target.useCard(tCardCopy, [player], false);
+						if (tName === "sha" && pName !== "shan") useEvent.directHit = [player];
+						if (hq.damageBonus && tName === "sha") useEvent.baseDamage = (useEvent.baseDamage || 1) + 1;
+						await useEvent;
+					}
 				} else {
 					game.log(target, "的扣置牌", tCardCopy, "无法对", player, "使用");
 					hq._targetUnusable = true;

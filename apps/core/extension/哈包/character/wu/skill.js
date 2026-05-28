@@ -502,6 +502,156 @@ const skill = {
 	},
 
 	fufeng: {
+		audio: 2,
+		forced: true,
+		locked: true,
+		trigger: { global: "useSkill" },
+		filter(event, player) {
+			if (event.skill !== "huaquan") return false;
+			const hq = player.storage._huaquan_state;
+			if (!hq || hq._fufeng_hooked) return false;
+			return hq.target === player || event.player === player;
+		},
+		firstDo: true,
+		async content(event, trigger, player) {
+			const hq = player.storage._huaquan_state;
+			if (!hq) return;
+			hq._fufeng_hooked = true;
+			if (!hq.onBeforeUse) hq.onBeforeUse = [];
+			if (!hq.onResolve) hq.onResolve = [];
+
+			const fufengOwner = player;
+
+			hq.onBeforeUse.push(async (hq, hqInitiator, hqTarget) => {
+				if (!fufengOwner.isIn()) return;
+				const isInitiator = fufengOwner === hqInitiator;
+				const myCard = isInitiator ? hq.playerCard : hq.targetCard;
+				const oppCard = isInitiator ? hq.targetCard : hq.playerCard;
+				const opponent = isInitiator ? hqTarget : hqInitiator;
+				if (!myCard || !oppCard) return;
+				const myType = get.type(myCard);
+				if (myType !== "trick" && myType !== "equip") return;
+				if (oppCard.name !== "sha") return;
+				if (fufengOwner.canUse(myCard.name, opponent, false)) return;
+				fufengOwner.logSkill("fufeng");
+				hq._shaDisabled = true;
+				game.log("浮风：", fufengOwner, "扣置的", myCard, "使", opponent, "的杀失效");
+			});
+
+			hq.onResolve.push(async (hq, hqInitiator, hqTarget) => {
+				if (!fufengOwner.isIn()) return;
+				const isInitiator = fufengOwner === hqInitiator;
+				const opponent = isInitiator ? hqTarget : hqInitiator;
+				const iUnusable = isInitiator ? hq._playerUnusable : hq._targetUnusable;
+				const oppUnusable = isInitiator ? hq._targetUnusable : hq._playerUnusable;
+				if (iUnusable && oppUnusable && !hq._fufeng_draw_done) {
+					hq._fufeng_draw_done = true;
+					fufengOwner.logSkill("fufeng");
+					await fufengOwner.draw();
+					if (opponent && opponent.isIn()) {
+						await opponent.draw();
+					}
+					game.log("浮风：双方各摸一张牌");
+				}
+			});
+		},
+		ai: {
+			order: 5,
+			result: { player: 1 },
+			threaten: 1.2,
+		},
+	},
+
+	lunzhen: {
+		audio: 2,
+		enable: "phaseUse",
+		usable: 1,
+		filterTarget(card, player, target) {
+			return target !== player && target.countCards("h") >= player.countCards("h");
+		},
+		selectTarget: 1,
+		filter(event, player) {
+			return player.countCards("h") > 0;
+		},
+		async content(event, trigger, player) {
+			const target = event.targets[0];
+			player.logSkill("lunzhen", target);
+
+			while (player.isIn() && target.isIn() && player.countCards("h") > 0 && target.countCards("h") > 0) {
+				const hq = { target, cardsSet: [], damageBonus: false };
+				player.storage._huaquan_state = hq;
+				target.storage._huaquan_state = hq;
+				await player.useSkill("huaquan", [target]);
+				await game.delay(0);
+			}
+			if (player.isIn() && player.countCards("h") === 0) {
+				game.log(player, "在论真划拳中手牌耗尽");
+				await player.loseHp(1);
+			}
+			if (target.isIn() && target.countCards("h") === 0) {
+				game.log(target, "在论真划拳中手牌耗尽");
+				await target.loseHp(1);
+			}
+		},
+		ai: {
+			order: 6,
+			result: {
+				target(player, target) {
+					const att = get.attitude(player, target);
+					if (att < 0) {
+						const handDiff = target.countCards("h") - player.countCards("h");
+						return Math.min(3, 1 + handDiff * 0.5);
+					}
+					return -2;
+				},
+			},
+		},
+	},
+
+	gefang: {
+		audio: 2,
+		zhuSkill: true,
+		trigger: { global: "phaseDrawBegin1" },
+		filter(event, player) {
+			return !event.numFixed && player.storage.gefang_active;
+		},
+		forced: true,
+		silent: true,
+		async content(event, trigger, player) {
+			trigger.num = Math.min(trigger.player.hp, 5);
+		},
+		group: ["gefang_activate"],
+		subSkill: {
+			activate: {
+				audio: 2,
+				zhuSkill: true,
+				limited: true,
+				trigger: { player: "phaseBegin" },
+				filter(event, player) {
+					return !player.storage.gefang_used;
+				},
+				async cost(event, trigger, player) {
+					const result = await player
+						.chooseBool("革放：是否改变全场摸牌规则，改为摸当前体力值数量的牌（最多为五）？")
+						.set("ai", () => player.hp > 2)
+						.forResult();
+					event.result = { bool: result.bool };
+				},
+				async content(event, trigger, player) {
+					player.storage.gefang_used = true;
+					player.storage.gefang_active = true;
+					player.logSkill("gefang");
+				},
+				ai: {
+					order: 10,
+					result: { player: 2 },
+				},
+			},
+		},
+		ai: {
+			order: 1,
+			result: { player: 2 },
+		},
 	},
 };
 

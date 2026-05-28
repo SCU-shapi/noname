@@ -199,14 +199,14 @@ const skill = {
 				game.log("划拳双方必须均有手牌");
 				return;
 			}
-			const hq = { target, cardsSet: [], damageBonus: false };
-			player.storage._huaquan_state = hq;
-			target.storage._huaquan_state = hq;
-
-			if (player.hasSkill("feiyu") && player.hp === 1) {
-				await player.draw(2);
-				hq.damageBonus = true;
+			let hq = player.storage._huaquan_state;
+			if (!hq) {
+				hq = { target, cardsSet: [], damageBonus: false };
+				player.storage._huaquan_state = hq;
+				target.storage._huaquan_state = hq;
 			}
+			if (!hq.onResolve) hq.onResolve = [];
+			if (!hq.onCleanup) hq.onCleanup = [];
 
 			const playerResult = await player.chooseCard("h", true, "划拳：请扣置一张手牌")
 				.set("ai", card => 6 - get.value(card))
@@ -217,11 +217,6 @@ const skill = {
 			hq.playerCard = playerCard;
 			hq.cardsSet.push({ name: pName, cardId: playerCard.cardid, owner: player, used: false });
 			await player.addToExpansion([playerCard], "give");
-
-			if (target.hasSkill("feiyu") && target.hp === 1) {
-				await target.draw(2);
-				hq.damageBonus = true;
-			}
 
 			const targetResult = await target.chooseCard("h", true, "划拳：请扣置一张手牌")
 				.set("ai", card => 6 - get.value(card))
@@ -268,7 +263,7 @@ const skill = {
 				const tCardCopy = { name: tCard.name, suit: tCard.suit, number: tCard.number };
 
 				game.log(player, "翻开了扣置的", pCardCopy);
-				const playerCanUse = pName === "sha" || (player.canUse(pName, target, false) && !(player.hasSkill("fufeng") && (get.type(pName) === "trick" || get.type(pName) === "equip")));
+				const playerCanUse = pName === "sha" || player.canUse(pName, target, false);
 				if (playerCanUse) {
 					hq.cardsSet[0].used = true;
 					const useEvent = player.useCard(pCardCopy, [target], false);
@@ -277,11 +272,11 @@ const skill = {
 					await useEvent;
 				} else {
 					game.log(player, "的扣置牌", pCardCopy, "无法对", target, "使用");
-					if (player.hasSkill("mengbu")) { player.logSkill("mengbu"); await player.draw(2); }
+					hq._playerUnusable = true;
 				}
 
 				game.log(target, "翻开了扣置的", tCardCopy);
-				const targetCanUse = tName === "sha" || (target.canUse(tName, player, false) && !(target.hasSkill("fufeng") && (get.type(tName) === "trick" || get.type(tName) === "equip")));
+				const targetCanUse = tName === "sha" || target.canUse(tName, player, false);
 				if (targetCanUse) {
 					hq.cardsSet[1].used = true;
 					const useEvent = target.useCard(tCardCopy, [player], false);
@@ -290,22 +285,13 @@ const skill = {
 					await useEvent;
 				} else {
 					game.log(target, "的扣置牌", tCardCopy, "无法对", player, "使用");
-					if (target.hasSkill("mengbu")) { target.logSkill("mengbu"); await target.draw(2); }
+					hq._targetUnusable = true;
 				}
 
 			}
 
-			if (player.hasSkill("hankuang") || target.hasSkill("hankuang")) {
-				const noSha = !hq.cardsSet.some(c => c.name && c.name === "sha");
-				if (noSha) {
-					if (player.hasSkill("hankuang")) { player.logSkill("hankuang"); await player.draw(1); }
-					if (target.hasSkill("hankuang")) { target.logSkill("hankuang"); await target.draw(1); }
-				}
-			}
-
-			if (player.hasSkill("fufeng") || target.hasSkill("fufeng")) {
-				const allUnused = hq.cardsSet.every(c => !c.used);
-				if (allUnused) { await player.draw(1); await target.draw(1); }
+			for (const fn of hq.onResolve) {
+				await fn(hq, player, target);
 			}
 
 			const pRest = hq.playerCard;
@@ -316,10 +302,16 @@ const skill = {
 			delete player.storage._huaquan_state;
 			delete target.storage._huaquan_state;
 
-			if (player.hasSkill("mengbu")) { await player.useSkill("mengbu"); }
-			if (target.hasSkill("mengbu")) { await target.useSkill("mengbu"); }
+			for (const fn of hq.onCleanup) {
+				await fn(hq, player, target);
+			}
 
 			function cleanup() {
+				if (hq.onCleanup) {
+					for (const fn of hq.onCleanup) {
+						fn(hq, player, target);
+					}
+				}
 				if (hq.playerCard && get.position(hq.playerCard) === "x") player.loseToDiscardpile([hq.playerCard]);
 				if (hq.targetCard && get.position(hq.targetCard) === "x") target.loseToDiscardpile([hq.targetCard]);
 				delete player.storage._huaquan_state;
@@ -331,93 +323,29 @@ const skill = {
 		},
 	},
 
-	huaquan_count: {
-		forced: true,
-		locked: true,
-		trigger: { player: "damageBefore" },
+	tihu: {
+		trigger: { player: "phaseUseBegin", global: "phaseUseBegin" },
 		filter(event, player) {
-			return event.source && event.source.isIn() && event.source.hp < player.hp;
+			if (event.player === player) return player.countCards("h") > 0 && game.hasPlayer(target => target !== player && target.countCards("h") > 0);
+			return player.countCards("h") > 0;
 		},
 		async content(event, trigger, player) {
-			const source = trigger.source;
-			player.logSkill("niren", source);
-			trigger.cancel();
-			const count = Math.min(2, source.countCards("he"));
-			if (count > 0) {
-				await player.discardPlayerCard(source, "he", [1, count], true);
+			let target;
+			if (trigger.player === player) {
+				const result = await player.chooseTarget("提壶：请选择一名其他角色划拳")
+					.set("filterTarget", (card, p, target) => target !== p && target.countCards("h") > 0)
+					.set("ai", target => get.attitude(player, target) < 0 ? 1 : 0)
+					.forResult();
+				if (!result.bool || !result.targets || !result.targets.length) return;
+				target = result.targets[0];
+			} else {
+				target = trigger.player;
 			}
-		},
-		group: ["niren_damage", "niren_reset"],
-		subSkill: {
-			damage: {
-				forced: true,
-				locked: true,
-				trigger: { player: "useCard" },
-				filter(event, player) {
-					return event.card && event.card.name === "sha" && !player.storage._niren_first_sha_used;
-				},
-				async content(event, trigger, player) {
-					player.storage._niren_first_sha_used = true;
-					trigger.baseDamage += 1;
-				},
-			},
-			reset: {
-				forced: true,
-				silent: true,
-				trigger: { global: "roundStart" },
-				content(event, trigger, player) {
-					delete player.storage._niren_first_sha_used;
-				},
-			},
-		},
-		ai: {
-			order: 7,
-			result: { player: 1 },
-		},
-	},
-
-	huoxin: {
-		trigger: { global: "phaseBegin" },
-		filter(event, player) {
-			return event.name === "phaseUse" && event.player !== player && event.player.isIn() && player.countCards("h") > 0;
-		},
-		async cost(event, trigger, player) {
-			const result = await player.chooseBool("活心：是否与" + get.translation(trigger.player) + "划拳？");
-			event.result = { bool: result.bool };
-		},
-		async content(event, trigger, player) {
-			const target = trigger.player;
-			player.logSkill("huoxin", target);
-			player.storage._huoxin_target = target;
-			player.storage._huoxin_no_damage = true;
+			player.logSkill("tihu", target);
+			const hq = { target, cardsSet: [], damageBonus: false };
+			player.storage._huaquan_state = hq;
+			target.storage._huaquan_state = hq;
 			await player.useSkill("huaquan", [target]);
-			if (player.storage._huoxin_no_damage) {
-				target.addTempSkill("huoxin_block");
-				game.log(target, "本回合无法使用杀");
-			}
-			delete player.storage._huoxin_target;
-			delete player.storage._huoxin_no_damage;
-		},
-		group: "huoxin_check",
-		subSkill: {
-			check: {
-				forced: true,
-				silent: true,
-				trigger: { global: "damageBegin1" },
-				filter(event, player) {
-					return player.storage._huoxin_target && player.storage._huoxin_no_damage;
-				},
-				content(event, trigger, player) {
-					player.storage._huoxin_no_damage = false;
-				},
-			},
-			block: {
-				mod: {
-					cardEnabled(card, player) {
-						if (card.name === "sha") return false;
-					},
-				},
-			},
 		},
 		ai: {
 			order: 6,
@@ -426,96 +354,22 @@ const skill = {
 	},
 
 	feiyu: {
-		group: "feiyu_comp",
-		subSkill: {
-			comp: {
-				trigger: { player: "useCardAfter" },
-				forced: true,
-				locked: true,
-				filter(event, player) {
-					return player.storage._huaquan_state && event.card && event.card._huaquan_card;
-				},
-				async content(event, trigger, player) {
-					const hq = player.storage._huaquan_state;
-					if (!hq) return;
-					const oppHjc = hq.cardsSet.find(c => c.owner !== player);
-					if (!oppHjc) return;
-					const myNum = get.number(trigger.card) || 0;
-					const oppNum = get.number(oppHjc.card) || 0;
-					if (myNum > oppNum) {
-						if (player.canUse({ name: "sha", isCard: true }, hq.target, false)) {
-							await player.useCard({ name: "sha", isCard: true }, hq.target, false);
-						}
-					}
-				},
-			},
+		trigger: { global: "useSkill" },
+		filter(event, player) {
+			if (event.skill !== "huaquan") return false;
+			if (player.hp !== 1) return false;
+			const hq = player.storage._huaquan_state;
+			if (!hq) return false;
+			if (hq._feiyu_triggered && hq._feiyu_triggered.includes(player)) return false;
+			return true;
 		},
-		ai: {
-			order: 5,
-			result: { player: 0.5 },
-		},
-	},
-
-	tihu: {
-		enable: "phaseUse",
-		filterTarget(card, player, target) {
-			return target !== player && target.countCards("h") > 0;
-		},
-		selectTarget: 1,
+		firstDo: true,
 		async content(event, trigger, player) {
-			const target = event.targets[0];
-			player.logSkill("tihu", target);
-			await player.useSkill("huaquan", [target]);
-		},
-		group: ["tihu_defend", "tihu_reset"],
-		subSkill: {
-			defend: {
-				trigger: { global: "phaseBegin" },
-				filter(event, player) {
-					return event.name === "phaseUse" && event.player !== player && event.player.isIn() && player.countCards("h") > 0 && event.player.countCards("h") > 0 && !player.storage._tihu_used;
-				},
-				async cost(event, trigger, player) {
-					const result = await player.chooseBool("提壶：是否与" + get.translation(trigger.player) + "划拳？");
-					event.result = { bool: result.bool };
-				},
-				async content(event, trigger, player) {
-					player.storage._tihu_used = true;
-					player.logSkill("tihu", trigger.player);
-					await player.useSkill("huaquan", [trigger.player]);
-				},
-			},
-			reset: {
-				forced: true,
-				silent: true,
-				trigger: { global: "roundStart" },
-				content(event, trigger, player) {
-					delete player.storage._tihu_used;
-				},
-			},
-		},
-		ai: {
-			order: 6,
-			result: { target: 1 },
-		},
-	},
-
-	hankuang: {
-		forced: true,
-		locked: true,
-		group: "hankuang_jiusha",
-		subSkill: {
-			jiusha: {
-				forced: true,
-				locked: true,
-				trigger: { global: "useCard" },
-				filter(event, player) {
-					return player.storage._huaquan_state && event.card && event.card.name === "sha";
-				},
-				async content(event, trigger, player) {
-					trigger.card.nature = "liquor";
-					game.log(trigger.player, "的杀在划拳中视为酒杀");
-				},
-			},
+			const hq = player.storage._huaquan_state;
+			await player.draw(2);
+			hq.damageBonus = true;
+			if (!hq._feiyu_triggered) hq._feiyu_triggered = [];
+			hq._feiyu_triggered.push(player);
 		},
 		ai: {
 			order: 5,
@@ -523,48 +377,138 @@ const skill = {
 		},
 	},
 
+	fufeng: {
+		mod: {
+			cardEnabled(card, player) {
+				if (player.storage._huaquan_state) {
+					if (get.type(card) === "trick" || get.type(card) === "equip") return false;
+				}
+			},
+		},
+		trigger: { global: "useSkill" },
+		filter(event, player) {
+			if (event.skill !== "huaquan") return false;
+			const hq = player.storage._huaquan_state;
+			if (!hq || hq._fufeng_hooked) return false;
+			return hq.target === player || event.player === player;
+		},
+		firstDo: true,
+		async content(event, trigger, player) {
+			const hq = player.storage._huaquan_state;
+			hq._fufeng_hooked = true;
+			if (!hq.onResolve) hq.onResolve = [];
+			hq.onResolve.push(async (hq, p, t) => {
+				const allUnused = hq.cardsSet.every(c => !c.used);
+				if (allUnused) {
+					await p.draw(1);
+					await t.draw(1);
+				}
+			});
+		},
+		ai: {
+			order: 4,
+			result: { player: 0.5 },
+		},
+	},
+
+	hankuang: {
+		forced: true,
+		locked: true,
+		trigger: { global: ["useCardAfter", "useSkill"] },
+		filter(event, player) {
+			if (event.name === "useCardAfter") {
+				return event.card && event.card.name === "sha" &&
+					event.player && event.player.storage._huaquan_state &&
+					!event.player.hasSkill("jiu");
+			}
+			if (event.name === "useSkill") {
+				if (event.skill !== "huaquan") return false;
+				const hq = player.storage._huaquan_state;
+				if (!hq || hq._hankuang_hooked) return false;
+				return hq.target === player || event.player === player;
+			}
+			return false;
+		},
+		async content(event, trigger, player) {
+			if (trigger.name === "useCardAfter") {
+				const shaUser = trigger.player;
+				shaUser.storage.jiu = 1;
+				shaUser.addSkill("jiu");
+				if (lib.config.jiu_effect && !shaUser.node.jiu) {
+					shaUser.node.jiu = ui.create.div(".playerjiu", shaUser.node.avatar);
+					shaUser.node.jiu2 = ui.create.div(".playerjiu", shaUser.node.avatar2);
+				}
+			} else if (trigger.name === "useSkill") {
+				const hq = player.storage._huaquan_state;
+				hq._hankuang_hooked = true;
+				const p = trigger.player;
+				const t = hq.target;
+
+				for (const s of [p, t]) {
+					s.storage.jiu = 1;
+					s.addSkill("jiu");
+					if (lib.config.jiu_effect && !s.node.jiu) {
+						s.node.jiu = ui.create.div(".playerjiu", s.node.avatar);
+						s.node.jiu2 = ui.create.div(".playerjiu", s.node.avatar2);
+					}
+				}
+
+				if (!hq.onResolve) hq.onResolve = [];
+				hq.onResolve.push(async (hq, p, t) => {
+					const noSha = !hq.cardsSet.some(c => c.name && c.name === "sha");
+					if (noSha) {
+						if (p.hasSkill("hankuang")) {
+							p.logSkill("hankuang");
+							await p.draw(1);
+						}
+						if (t.hasSkill("hankuang")) {
+							t.logSkill("hankuang");
+							await t.draw(1);
+						}
+					}
+				});
+
+				if (!hq.onCleanup) hq.onCleanup = [];
+				hq.onCleanup.push((hq, p, t) => {
+					p.removeSkill("jiu");
+					t.removeSkill("jiu");
+				});
+			}
+		},
+		ai: {
+			order: 7,
+			result: { player: 1 },
+			damageBonus: true,
+			skillTagFilter(player, tag, arg) {
+				if (tag === "damageBonus") return arg && arg.card && arg.card.name === "sha";
+			},
+		},
+	},
+
 	tingqiao: {
 		forced: true,
 		locked: true,
-		trigger: {
-			player: ["useCardAfter", "respondAfter"],
-		},
+		trigger: { global: ["useCard", "respond"] },
 		filter(event, player) {
 			if (!event.card || event.card.name !== "shan") return false;
-			const parentUseCard = event.getParent("useCard");
-			return parentUseCard && parentUseCard.card && parentUseCard.card.name === "sha";
+			if (!Array.isArray(event.respondTo)) return false;
+			if (!event.respondTo[1] || event.respondTo[1].name !== "sha") return false;
+			if (event.player !== player && event.respondTo[0] !== player) return false;
+			return true;
 		},
 		async content(event, trigger, player) {
-			const parentUseCard = trigger.getParent("useCard");
-			if (!parentUseCard) return;
-			const shaUser = parentUseCard.player;
-			const shaTarget = parentUseCard.targets && parentUseCard.targets[0];
-			if (!shaUser || !shaTarget || shaTarget !== player) return;
-			if (shaTarget.isIn() && shaTarget.canUse({ name: "sha", isCard: true }, shaUser, false)) {
-				const nextUse = shaTarget.useCard({ name: "sha", isCard: true }, shaUser, false);
-				shaTarget.addTempSkill("tingqiao_directhit");
-				await nextUse;
-				shaTarget.removeSkills("tingqiao_directhit");
+			player.logSkill("tingqiao");
+			const shaSource = trigger.respondTo[0];
+			const shaTarget = trigger.player;
+			if (shaSource && shaSource.isIn() && shaTarget && shaTarget.isIn()) {
+				const useEvent = shaTarget.useCard({ name: "sha", isCard: true }, shaSource, false);
+				useEvent.directHit = [shaSource];
+				await useEvent;
 			}
-			await player.draw(1);
-		},
-		group: "tingqiao_directhit",
-		subSkill: {
-			directhit: {
-				trigger: { player: "useCard" },
-				forced: true,
-				silent: true,
-				firstDo: true,
-				filter(event, player) {
-					return event.card && event.card.name === "sha";
-				},
-				content(event, trigger, player) {
-					trigger.directHit.addArray(game.players);
-				},
-			},
+			await player.draw();
 		},
 		ai: {
-			order: 6,
+			order: 7,
 			result: { player: 1 },
 		},
 	},
@@ -586,7 +530,11 @@ const skill = {
 						.set("ai", target => get.attitude(player, target) < 0 ? 1 : 0)
 						.forResult();
 					if (result.bool && result.targets && result.targets.length) {
-						await player.useSkill("huaquan", [result.targets[0]]);
+						const t = result.targets[0];
+						const hq = { target: t, cardsSet: [], damageBonus: false };
+						player.storage._huaquan_state = hq;
+						t.storage._huaquan_state = hq;
+						await player.useSkill("huaquan", [t]);
 					}
 				}
 			}
@@ -598,7 +546,37 @@ const skill = {
 	},
 
 	mengbu: {
+		trigger: { global: "useSkill" },
+		filter(event, player) {
+			if (event.skill !== "huaquan") return false;
+			const hq = player.storage._huaquan_state;
+			if (!hq || hq._mengbu_hooked) return false;
+			return hq.target === player || event.player === player;
+		},
+		firstDo: true,
 		async content(event, trigger, player) {
+			if (trigger && trigger.name === "useSkill" && trigger.skill === "huaquan") {
+				const hq = player.storage._huaquan_state;
+				if (!hq) return;
+				hq._mengbu_hooked = true;
+				if (!hq.onResolve) hq.onResolve = [];
+				if (!hq.onCleanup) hq.onCleanup = [];
+				hq.onResolve.push(async (hq, p, t) => {
+					if (hq._playerUnusable && p.hasSkill("mengbu")) {
+						p.logSkill("mengbu");
+						await p.draw(2);
+					}
+					if (hq._targetUnusable && t.hasSkill("mengbu")) {
+						t.logSkill("mengbu");
+						await t.draw(2);
+					}
+				});
+				hq.onCleanup.push(async (hq, p, t) => {
+					if (p.hasSkill("mengbu")) await p.useSkill("mengbu");
+					if (t.hasSkill("mengbu")) await t.useSkill("mengbu");
+				});
+				return;
+			}
 			if (!player.countCards("h")) return;
 			player.logSkill("mengbu");
 			await player.chooseToUse({
@@ -631,269 +609,11 @@ const skill = {
 				player.countCards("h") > 0;
 		},
 		async content(event, trigger, player) {
-			await player.useSkill("huaquan", [trigger.player]);
-		},
-		ai: {
-			order: 7,
-			result: { player: 1 },
-		},
-	},
-
-	gongfang: {
-		init(player) {
-			player.storage.gongfang_mode = "hengdao";
-			player.addSkills("hengdao");
-		},
-		trigger: { player: ["gameStart", "useCardAfter", "respondAfter"] },
-		filter(event, player) {
-			if (event.name === "gameStart") return true;
-			return event.card && (event.card.name === "sha" || event.card.name === "shan");
-		},
-		async cost(event, trigger, player) {
-			const current = player.storage.gongfang_mode;
-			const choices = [];
-			if (current !== "hengdao") choices.push("切换为横刀");
-			if (current !== "qingdun") choices.push("切换为擎盾");
-			choices.push("不切换");
-			const result = await player.chooseControl(choices)
-				.set("prompt", "攻防：当前为" + (current === "hengdao" ? "横刀" : "擎盾") + "，是否切换？")
-				.forResult();
-			event.result = { bool: result.control !== "不切换", control: result.control };
-		},
-		async content(event, trigger, player) {
-			if (event.cost_data.control === "切换为横刀") {
-				player.storage.gongfang_mode = "hengdao";
-				player.removeSkills("qingdun");
-				player.addSkills("hengdao");
-				game.log(player, "切换为横刀");
-			} else if (event.cost_data.control === "切换为擎盾") {
-				player.storage.gongfang_mode = "qingdun";
-				player.removeSkills("hengdao");
-				player.addSkills("qingdun");
-				game.log(player, "切换为擎盾");
-			}
-		},
-		ai: {
-			order: 8,
-			result: { player: 1 },
-		},
-	},
-
-	hengdao: {
-		forced: true,
-		trigger: { player: "phaseDrawBegin1" },
-		filter(event, player) {
-			return player.storage.gongfang_mode === "hengdao" && (player.hujia || 0) > 0;
-		},
-		async content(event, trigger, player) {
-			const shield = player.hujia || 0;
-			player.hujia = 0;
-			const extra = player.numOf("draw") * shield;
-			trigger.num += extra;
-			game.log(player, "清空了护盾，多摸了" + extra + "张牌");
-		},
-		group: "hengdao_convert",
-		subSkill: {
-			convert: {
-				enable: ["chooseToUse", "chooseToRespond"],
-				filterCard(card, player) {
-					if (!player.storage.gongfang_mode || player.storage.gongfang_mode !== "hengdao") return false;
-					return card.name === "sha" || card.name === "shan" || (card.name === "tao" && _status.event.name !== "chooseToRespond");
-				},
-				viewAs(cards, player) {
-					const card = cards[0];
-					if (card.name === "shan") return { name: "sha" };
-					if (card.name === "sha") return { name: "shan" };
-					if (card.name === "tao") return { name: "juedou" };
-					return { name: "sha" };
-				},
-				viewAsFilter(player) {
-					return player.storage.gongfang_mode === "hengdao";
-				},
-				position: "hes",
-				async onUse(result, player) {
-					await player.draw(1);
-				},
-			},
-		},
-		ai: {
-			order: 7,
-			result: { player: 1 },
-		},
-	},
-
-	qingdun: {
-		forced: true,
-		trigger: { player: "phaseDrawBegin1" },
-		filter(event, player) {
-			return player.storage.gongfang_mode === "qingdun";
-		},
-		async content(event, trigger, player) {
-			if (trigger.num > 0) {
-				trigger.num -= 1;
-				player.hujia = (player.hujia || 0) + 1;
-				game.log(player, "少摸一张牌获得了1点护盾");
-			}
-		},
-		group: ["qingdun_convert", "qingdun_block", "qingdun_revenge", "qingdun_block_reset"],
-		subSkill: {
-			convert: {
-				mod: {
-					cardname(card, player) {
-						if (card.name === "shan" && player.storage.gongfang_mode === "qingdun") return "sha";
-					},
-				},
-			},
-			block: {
-				forced: true,
-				locked: true,
-				trigger: { player: "damageBefore" },
-				filter(event, player) {
-					return _status.currentPhase !== player &&
-						event.card && event.card.name === "sha" &&
-						!player.storage._qingdun_blocked;
-				},
-				async content(event, trigger, player) {
-					player.storage._qingdun_blocked = true;
-					trigger.cancel();
-					game.log(player, "防止了回合外受到的第一次杀的伤害");
-				},
-			},
-			block_reset: {
-				forced: true,
-				silent: true,
-				trigger: { player: "phaseBegin" },
-				content(event, trigger, player) {
-					delete player.storage._qingdun_blocked;
-				},
-			},
-			revenge: {
-				forced: true,
-				trigger: { target: "useCardAfter" },
-				filter(event, player) {
-					return event.card && event.card.name === "sha" &&
-						event.targets && event.targets.includes(player) &&
-						player.storage.gongfang_mode === "qingdun";
-				},
-				async content(event, trigger, player) {
-					const source = trigger.player;
-					if (source && source.isIn() && player.canUse({ name: "sha", isCard: true }, source, false)) {
-						await player.useCard({ name: "sha", isCard: true }, source, false);
-					}
-				},
-			},
-		},
-		ai: {
-			order: 7,
-			result: { player: 1 },
-		},
-	},
-
-	chifan: {
-		forced: true,
-		locked: true,
-		trigger: { player: "phaseBegin" },
-		filter(event, player) {
-			return true;
-		},
-		async content(event, trigger, player) {
-			const others = game.filterPlayer(p => p !== player && p.isIn()).sortBySeat();
-			let given = false;
-			for (const other of others) {
-				if (other.countCards("he") === 0) continue;
-				const result = await other.chooseBool("吃饭：是否给" + get.translation(player) + "一张牌并摸一张牌？")
-					.set("ai", () => get.attitude(other, player) > 0 ? 1 : 0)
-					.forResult();
-				if (result.bool) {
-					const giveResult = await other.chooseToGive(player, "he", true, "吃饭：请选择一张牌交给" + get.translation(player));
-					if (giveResult.bool) {
-						given = true;
-						const card = giveResult.cards && giveResult.cards[0];
-						await other.draw(1);
-						if (card && get.name(card, other) === "sha") {
-							await other.draw(1);
-						}
-						break;
-					}
-				}
-			}
-			if (!given) {
-				await player.draw(1);
-			}
-		},
-		ai: {
-			order: 8,
-			result: { player: 1 },
-		},
-	},
-
-	youxi: {
-		forced: true,
-		locked: true,
-		trigger: {
-			player: "useCardTo",
-			target: "useCardToTargeted",
-		},
-		filter(event, player) {
-			if (!event.card || get.name(event.card) !== "sha") return false;
-			return true;
-		},
-		async content(event, trigger, player) {
-			const isSelf = trigger.player === player;
-			const attacker = trigger.player;
-			const defender = isSelf ? trigger.targets[0] : player;
-
-			if (!defender || !defender.isIn()) return;
-
-			if (defender.countCards("h", "sha") > 0 && defender.canUse({ name: "sha" }, attacker, false)) {
-				const result = await defender
-					.chooseCard("h", "游戏：必须使用一张杀攻击" + get.translation(attacker))
-					.set("filterCard", card => card.name === "sha")
-					.set("ai", card => 10)
-					.forResult();
-				if (result.bool && result.cards && result.cards.length) {
-					await defender.useCard(result.cards[0], attacker, false);
-					return;
-				}
-			}
-			trigger.directHit.add(defender);
-		},
-		ai: {
-			order: 6,
-			result: { player: 1 },
-		},
-	},
-
-	lingdi: {
-		forced: true,
-		locked: true,
-		mod: {
-			targetEnabled(card, player, target) {
-				if (get.name(card) === "sha" && target.isTurnedOver()) return false;
-			},
-		},
-		ai: {
-			order: 5,
-			result: { player: 0.5 },
-		},
-	},
-
-	shuijiao: {
-		trigger: { player: ["phaseZhunbeiAfter", "phaseUseAfter"] },
-		async cost(event, trigger, player) {
-			const isZhunbei = trigger.name === "phaseZhunbei";
-			const action = isZhunbei ? "翻面并回复一点体力" : "翻面并摸两张牌";
-			const result = await player.chooseBool("睡觉：是否" + action + "？");
-			event.result = { bool: result.bool };
-		},
-		async content(event, trigger, player) {
-			player.logSkill("shuijiao");
-			await player.turnOver();
-			if (trigger.name === "phaseZhunbei") {
-				await player.recover(1);
-			} else {
-				await player.draw(2);
-			}
+			const t = trigger.player;
+			const hq = { target: t, cardsSet: [], damageBonus: false };
+			player.storage._huaquan_state = hq;
+			t.storage._huaquan_state = hq;
+			await player.useSkill("huaquan", [t]);
 		},
 		ai: {
 			order: 7,

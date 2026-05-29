@@ -36,7 +36,7 @@ const character = {
 		sex: "female",
 		group: "shen",
 		hp: 4,
-		// skills: ["chifan", "youxi", "lingdi", "shuijiao"],
+		skills: ["chifan", "youxi", "lingdi", "shuijiao"],
 	},
 };
 for (let i in character) {

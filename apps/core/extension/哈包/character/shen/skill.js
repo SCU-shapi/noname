@@ -1005,6 +1005,101 @@ const skill = {
 			},
 		},
 	},
+	
+	chifan: {
+		forced: true,
+		locked: true,
+		trigger: { player: "phaseZhunbeiBegin" },
+		async content(event, trigger, player) {
+			let given = false;
+			const others = game.players.filter(p => p !== player && p.isIn() && p.countCards("h") > 0).sortBySeat(player);
+			for (const p of others) {
+				const result = await p
+					.chooseCard("h", "吃饭：是否给" + get.translation(player) + "一张牌？")
+					.set("ai", card => {
+						if (get.attitude(p, player) > 0) {
+							if (get.name(card) === "sha") return 10 - get.value(card);
+							return 6 - get.value(card);
+						}
+						return -1;
+					})
+					.forResult();
+				if (result.bool) {
+					given = true;
+					const card = result.cards[0];
+					await p.give(card, player);
+					await p.draw();
+					game.log(p, "给了", player, "一张", card);
+					if (get.name(card) === "sha") {
+						await p.draw();
+						game.log(p, "因为给的是杀，再摸一张牌");
+					}
+				}
+			}
+			if (!given) await player.draw();
+		},
+	},
+	youxi: {
+		forced: true,
+		locked: true,
+		trigger: { global: "useCardToBefore" },
+		filter(event, player) {
+			return event.card.name === "sha" && (event.player === player || event.targets.includes(player));
+		},
+		async content(event, trigger, player) {
+			const target = trigger.targets.find(t => t.isIn());
+			if (!target) return;
+			const result = await target
+				.chooseToUse({
+					filterCard: (card) => get.name(card) === "sha" && lib.filter.cardEnabled(card, target),
+					filterTarget: (card, player, t) => t !== player,
+					prompt: "游戏：是否使用一张杀（无距离限制）？若不使用则无法响应此杀",
+					addCount: false,
+				})
+				.forResult();
+			if (!result.bool) {
+				if (!Array.isArray(trigger.directHit)) trigger.directHit = [];
+				trigger.directHit.push(target);
+			}
+		},
+	},
+	lingdi: {
+		forced: true,
+		locked: true,
+		mod: {
+			targetEnabled(card, player, target) {
+				if (card.name === "sha" && target.hasSkill("lingdi") && target.isTurnedOver()) return false;
+			},
+		},
+	},
+	shuijiao: {
+		forced: true,
+		locked: true,
+		trigger: { player: ["phaseDrawEnd", "phaseJieshu"] },
+		filter(event, player) {
+			if (event.name === "phaseDrawEnd" && player.isTurnedOver()) return false;
+			return true;
+		},
+		async content(event, trigger, player) {
+			const isDraw = event.triggername === "phaseDrawEnd";
+			const prompt = isDraw
+				? "睡觉：是否翻面并跳过回合，然后回复一点体力？"
+				: "睡觉：是否翻面并摸三张牌？";
+			const result = await player.chooseBool(prompt).set("logSkill", "shuijiao").forResult();
+			if (!result.bool) return;
+			await player.turnOver();
+			if (isDraw) {
+				const phaseEvent = trigger.getParent("phase");
+				if (phaseEvent && phaseEvent.phaseList) {
+					phaseEvent.phaseList.length = phaseEvent.num + 1;
+				}
+				await player.recover();
+			} else {
+				await player.draw(3);
+			}
+		},
+	},
 };
+
 
 export default skill;

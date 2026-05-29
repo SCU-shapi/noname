@@ -394,8 +394,6 @@ const skill = {
 			player.storage._fucong_used = true;
 			const baji = game.filterPlayer(p => p.hasSkill("fucong") && p.isIn())[0];
 			if (!baji) return;
-			const result = await player.chooseBool("服从：是否交给" + get.translation(baji) + "一张杀，令其对一名你指定的角色使用杀？");
-			if (!result.bool) return;
 			const giveResult = await player.chooseToGive(baji, "h", "服从：请交给" + get.translation(baji) + "一张杀")
 				.set("filterCard", card => card.name === "sha")
 				.set("ai", card => get.value(card) < 5 ? 1 : 0)
@@ -438,32 +436,35 @@ const skill = {
 		position: "he",
 		discard: false,
 		lose: false,
+		group: "xiaohui_block",
+		subSkill: {
+			block: {
+				charlotte: true,
+				trigger: { player: "phaseBegin" },
+				silent: true,
+				content() {
+					player.removeSkill("xiaohui_block");
+					delete player.storage._xiaohui_gave_to;
+				},
+				mod: {
+					targetEnabled(card, player, target) {
+						if (card && card.name === "sha" && player === target.storage._xiaohui_gave_to) return false;
+					},
+				},
+			},
+		},
 		async content(event, trigger, player) {
 			const target = event.targets[0];
 			player.logSkill("xiaohui", target);
 			const card = event.cards[0];
 			await player.give(card, target);
 			player.storage._xiaohui_gave_to = target;
-			player.addTempSkill("xiaohui_block", function(event, p, name) {
-				return name === "phaseBegin" && event.player === player;
-			});
+			player.addSkill("xiaohui_block");
 		},
 		ai: {
 			order: 5,
 			result: { target: 1 },
 		},
-	},
-
-	xiaohui_block: {
-		mod: {
-			targetEnabled(card, player, target) {
-				if (card && card.name === "sha" && player === target.storage._xiaohui_gave_to) return false;
-			},
-		},
-		onremove(player) {
-			delete player.storage._xiaohui_gave_to;
-		},
-		ai: { order: 1 },
 	},
 
 	zhishi: {
@@ -481,12 +482,18 @@ const skill = {
 				.set("ai", t => get.effect(t, { name: "sha" }, target, target))
 				.forResult();
 			if (!target2Result.bool || !target2Result.targets || !target2Result.targets.length) return;
-			const confirm = await target.chooseBool("指使：" + get.translation(player) + "要求你对" + get.translation(target2Result.targets[0]) + "使用一张杀并获得其一张牌，否则需交给" + get.translation(player) + "一张牌")
-				.set("ai", () => get.effect(target2Result.targets[0], { name: "sha" }, target, target) > 0 ? 1 : 0)
+			const finalTarget = target2Result.targets[0];
+			const confirm = await target.chooseBool("指使：" + get.translation(player) + "要求你对" + get.translation(finalTarget) + "使用一张杀并获得其一张牌，否则需交给" + get.translation(player) + "一张牌")
+				.set("ai", () => get.effect(finalTarget, { name: "sha" }, target, target) > 0 ? 1 : 0)
 				.forResult();
 			if (confirm.bool) {
-				await target.useCard({ name: "sha", isCard: true }, target2Result.targets, false);
-				if (player.countCards("he") > 0) {
+				const useResult = await target.chooseToUse({
+					filterCard: (card) => get.name(card) === "sha" && lib.filter.cardEnabled(card, target, "forceEnable"),
+					filterTarget: (card, p, t) => t === finalTarget,
+					prompt: "指使：请对" + get.translation(finalTarget) + "使用一张杀",
+					addCount: false,
+				}).forResult();
+				if (useResult?.bool && player.countCards("he") > 0) {
 					await target.gainPlayerCard(player, "he", true);
 				}
 			} else {

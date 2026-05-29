@@ -519,6 +519,7 @@ const skill = {
 			await trigger.player.recover(1);
 		}
 	},
+
 	// 从众 - 回合外每回合限一次，当有牌于本次回合外不是第一次被使用后，你可以弃置一张手牌，视为使用者再次使用一张相同的牌
 	congzhong: {
 		audio: 2,
@@ -888,6 +889,7 @@ const skill = {
 			}
 		}
 	},
+
 	// 空灵 - 锁定技，你的锦囊牌均视为闪，装备牌均视为杀。弃牌阶段弃牌后，你弃置场上一张牌。
 	kongling: {
 		audio: 2,
@@ -1013,6 +1015,7 @@ const skill = {
 			},
 		},
 	},
+
 	// 纵横 - 出牌阶段限一次，你可以弃置一张手牌并指定一名角色：若你与其的距离大于1，你摸三张牌，其摸一张牌；否则，弃置其一张牌。
 	zongheng: {
 		audio: 2,
@@ -1100,6 +1103,7 @@ const skill = {
 			},
 		},
 	},
+
 	// 葵花 - 锁定技，当你使用杀指定目标后，翻开牌堆顶一张牌作为逆置于武将牌上。若此逆颜色唯一，则你发动阳流，否则发动池阴。当你集齐七种点数的逆后，你失去葵花并获得散功。
 	kuihua: {
 		audio: 2,
@@ -1246,6 +1250,7 @@ const skill = {
 			trigger.num--;
 		},
 	},
+
 	mofo: {
 		audio: 2,
 		frequent: true,
@@ -1389,6 +1394,7 @@ const skill = {
 			damageBonus: true,
 		},
 	},
+
 	wuyi: {
 		audio: 2,
 		marktext: "毒",
@@ -1469,6 +1475,7 @@ const skill = {
 			},
 		},
 	},
+	
 	chouxiang: {
 		audio: 2,
 		forced: true,
@@ -1508,16 +1515,16 @@ const skill = {
 		forced: true,
 		locked: true,
 		trigger: {
-			player: ["phaseBegin", "phaseAfter"],
+			player: ["phaseBefore", "phaseOver"],
 		},
 		filter(event, player, name) {
-			return name === "phaseBegin" || name === "phaseAfter";
+			return name === "phaseBefore" || name === "phaseOver";
 		},
 		async content(event, trigger, player) {
-			const isBlack = event.triggername === "phaseBegin";
-			const color = isBlack ? "black" : "red";
-			const colorName = isBlack ? "黑色" : "红色";
-			const phaseLabel = isBlack ? "回合开始" : "回合结束";
+			const isBefore = event.triggername === "phaseBefore";
+			const color = isBefore ? "black" : "red";
+			const colorName = isBefore ? "黑色" : "红色";
+			const phaseLabel = isBefore ? "回合开始前" : "回合结束后";
 
 			const targets = game.filterPlayer(current => current != player);
 			if (!targets.length) return;
@@ -1541,9 +1548,9 @@ const skill = {
 				const myCards = player.getCards("h", card => get.color(card) === color);
 				const theirCards = target.getCards("h", card => get.color(card) === color);
 				if (myCards.length || theirCards.length) {
-					if (!isBlack) player.storage._gongyou_exchanging = true;
+					if (!isBefore) player.storage._gongyou_exchanging = true;
 					await player.swapHandcards(target, myCards, theirCards);
-					if (!isBlack) delete player.storage._gongyou_exchanging;
+					if (!isBefore) delete player.storage._gongyou_exchanging;
 				}
 			}
 		},

@@ -217,7 +217,6 @@ const skill = {
 			const pName = playerCard.name;
 			hq.playerCard = playerCard;
 			hq.cardsSet.push({ name: pName, cardId: playerCard.cardid, owner: player, used: false });
-			await player.addToExpansion([playerCard], "give");
 
 			const targetResult = await target.chooseCard("h", true, "划拳：请扣置一张手牌")
 				.set("ai", card => 6 - get.value(card))
@@ -227,6 +226,8 @@ const skill = {
 			const tName = targetCard.name;
 			hq.targetCard = targetCard;
 			hq.cardsSet.push({ name: tName, cardId: targetCard.cardid, owner: target, used: false });
+
+			await player.addToExpansion([playerCard], "give");
 			await target.addToExpansion([targetCard], "give");
 
 			const pShaTargetShan = pName === "sha" && tName === "shan";
@@ -511,6 +512,8 @@ const skill = {
 	},
 
 	mengbu: {
+		forced: true,
+		locked: true,
 		trigger: { global: "useSkill" },
 		filter(event, player) {
 			if (event.skill !== "huaquan") return false;
@@ -544,18 +547,9 @@ const skill = {
 			}
 			if (!player.countCards("h")) return;
 			player.logSkill("mengbu");
-			await player.chooseToUse({
-				filterCard(card) {
-					if (get.itemtype(card) !== "card" || get.position(card) !== "h") return false;
-					return lib.filter.cardEnabled(card, player);
-				},
-				filterTarget(card, player, target) {
-					if (get.type(card) === "equip") return target === player;
-					return lib.filter.filterTarget2(card, player, target);
-				},
-				prompt: "梦步：你可使用一张牌",
-				addCount: false,
-			});
+			const next = player.chooseToUse("梦步：你可使用一张牌");
+			next.set("addCount", false);
+			await next;
 		},
 		ai: {
 			order: 7,
@@ -747,6 +741,268 @@ const skill = {
 		ai: {
 			order: 5,
 			result: { player: 1 },
+		},
+	},
+
+	gongfang: {
+		forced: true,
+		locked: true,
+		trigger: {
+			global: "gameStart",
+			player: ["useCardAfter", "respondAfter"],
+		},
+		filter(event, player, triggername) {
+			if (triggername === "gameStart") return true;
+			if (triggername === "useCardAfter" || triggername === "respondAfter") {
+				return event.card && (event.card.name === "sha" || event.card.name === "shan");
+			}
+			return false;
+		},
+		async content(event, trigger, player) {
+			if (event.triggername === "gameStart") {
+				const result = await player
+					.chooseControl(["横刀", "擎盾"])
+					.set("prompt", "攻防：请选择初始第二技能")
+					.set("ai", () => "横刀")
+					.forResult();
+				player.addSkill(result.control === "横刀" ? "hengdao" : "qingdun");
+				game.log(player, "选择了初始第二技能" + result.control);
+				await player.draw();
+				return;
+			}
+			const hasHengdao = player.hasSkill("hengdao");
+			const result = await player
+				.chooseControl([hasHengdao ? "擎盾" : "横刀"], "cancel2")
+				.set("prompt", "攻防：是否切换第二技能？（当前为" + (hasHengdao ? "横刀" : "擎盾") + "）")
+				.set("ai", () => Math.random() < 0.3 ? (hasHengdao ? "擎盾" : "横刀") : "cancel2")
+				.forResult();
+			if (result.control !== "cancel2") {
+				player.logSkill("gongfang");
+				player.removeSkill(hasHengdao ? "hengdao" : "qingdun");
+				player.addSkill(result.control === "横刀" ? "hengdao" : "qingdun");
+				game.log(player, "切换第二技能为" + result.control);
+				await player.draw();
+			}
+		},
+		ai: {
+			order: 1,
+			result: { player: 1 },
+		},
+	},
+
+	hengdao: {
+		enable: ["chooseToUse", "chooseToRespond"],
+		position: "hs",
+		prompt: "将闪当杀、杀当闪、桃当决斗使用或打出",
+		viewAs(cards, player) {
+			if (cards.length) {
+				const name = get.name(cards[0], player);
+				if (name === "sha") return { name: "shan" };
+				if (name === "shan") return { name: "sha" };
+				if (name === "tao") return { name: "juedou" };
+			}
+			return null;
+		},
+		filterCard(card, player, event) {
+			event = event || _status.event;
+			const filter = event._backup.filterCard;
+			const name = get.name(card, player);
+			if (name === "sha" && filter({ name: "shan", cards: [card] }, player, event)) return true;
+			if (name === "shan" && filter({ name: "sha", cards: [card] }, player, event)) return true;
+			if (name === "tao" && filter({ name: "juedou", cards: [card] }, player, event)) return true;
+			return false;
+		},
+		filter(event, player) {
+			const filter = event.filterCard;
+			if (filter(get.autoViewAs({ name: "sha" }, "unsure"), player, event) && player.countCards("hs", "shan")) return true;
+			if (filter(get.autoViewAs({ name: "shan" }, "unsure"), player, event) && player.countCards("hs", "sha")) return true;
+			if (filter(get.autoViewAs({ name: "juedou" }, "unsure"), player, event) && player.countCards("hs", "tao")) return true;
+			return false;
+		},
+		check(card) {
+			const val = get.value(card);
+			if (get.name(card) === "tao") return 7 - val;
+			return 6 - val;
+		},
+		ai: {
+			order: 2,
+			result: { player: 1 },
+			respondSha: true,
+			respondShan: true,
+			skillTagFilter(player, tag) {
+				if (tag === "respondSha") return player.countCards("hs", "shan") > 0;
+				if (tag === "respondShan") return player.countCards("hs", "sha") > 0;
+			},
+		},
+		group: ["hengdao_drawphase", "hengdao_afterDraw", "hengdao_damage"],
+		subSkill: {
+			drawphase: {
+				trigger: { player: "phaseDrawBegin1" },
+				filter(event, player) {
+					return !event.numFixed;
+				},
+				async content(event, trigger, player) {
+					const hujia = player.hujia || 0;
+					if (hujia > 0) {
+						const result = await player
+							.chooseBool("横刀：是否清空护盾（" + hujia + "点），多摸" + hujia * 2 + "张牌？")
+							.set("ai", () => 1)
+							.forResult();
+						if (result.bool) {
+							player.logSkill("hengdao");
+							await player.changeHujia(-hujia);
+							trigger.num += hujia * 2;
+						}
+					} else {
+						const result = await player
+							.chooseBool("横刀：你没有护盾，是否失去一点体力并令本回合使用转化牌造成的伤害+1？")
+							.set("ai", () => 0.5)
+							.forResult();
+						if (result.bool) {
+							player.logSkill("hengdao");
+							await player.loseHp();
+							player.addTempSkill("hengdao_damage", { player: "phaseAfter" });
+							player.storage.hengdao_damage = true;
+						}
+					}
+				},
+			},
+			afterDraw: {
+				trigger: { player: ["useCard", "respond"] },
+				filter(event, player) {
+					return event.skill === "hengdao";
+				},
+				forced: true,
+				async content(event, trigger, player) {
+					player.logSkill("hengdao");
+					await player.draw();
+				},
+			},
+			damage: {
+				charlotte: true,
+				trigger: { player: "useCardToPlayered" },
+				filter(event, player) {
+					return event.skill === "hengdao" && player.storage.hengdao_damage;
+				},
+				forced: true,
+				async content(event, trigger, player) {
+					const evt = trigger.getParent();
+					if (evt) evt.baseDamage = (evt.baseDamage || 1) + 1;
+				},
+			},
+		},
+	},
+
+	qingdun: {
+		mod: {
+			cardname(card, player, name) {
+				if (name === "shan") return "sha";
+			},
+		},
+		enable: ["chooseToUse", "chooseToRespond"],
+		position: "hs",
+		prompt: "将一张闪当杀使用或打出",
+		viewAs(cards, player) {
+			if (cards.length && get.name(cards[0], player) === "shan") {
+				return { name: "sha" };
+			}
+			return null;
+		},
+		filterCard(card, player, event) {
+			event = event || _status.event;
+			const filter = event._backup.filterCard;
+			if (get.name(card, player) === "shan" && filter({ name: "sha", cards: [card] }, player, event)) return true;
+			return false;
+		},
+		filter(event, player) {
+			const filter = event.filterCard;
+			return filter(get.autoViewAs({ name: "sha" }, "unsure"), player, event) && player.countCards("hs", "shan") > 0;
+		},
+		check(card) {
+			return 5 - get.value(card);
+		},
+		ai: {
+			order: 2,
+			result: { player: 1 },
+			respondSha: true,
+			skillTagFilter(player) {
+				return player.countCards("hs", "shan") > 0;
+			},
+		},
+		group: ["qingdun_drawphase", "qingdun_prevent", "qingdun_counter", "qingdun_reset"],
+		subSkill: {
+			drawphase: {
+				trigger: { player: "phaseDrawBegin1" },
+				filter(event, player) {
+					return !event.numFixed;
+				},
+				async content(event, trigger, player) {
+					const result = await player
+						.chooseBool("擎盾：是否少摸一张牌并获得一点护盾？")
+						.set("ai", () => 1)
+						.forResult();
+					if (result.bool) {
+						player.logSkill("qingdun");
+						trigger.num--;
+						await player.changeHujia(1);
+					}
+				},
+			},
+			prevent: {
+				trigger: { player: "damageBegin3" },
+				filter(event, player) {
+					if (player.storage.qingdun_prevented) return false;
+					if (!event.card || event.card.name !== "sha") return false;
+					const evt = event.getParent("useCard");
+					if (!evt || evt.player === player) return false;
+					return true;
+				},
+				forced: true,
+				async content(event, trigger, player) {
+					player.logSkill("qingdun");
+					player.storage.qingdun_prevented = true;
+					trigger.cancel();
+					game.log(player, "防止了" + get.translation(trigger.player) + "的杀伤害");
+				},
+			},
+			counter: {
+				trigger: { target: "useCardToPlayered" },
+				filter(event, player) {
+					if (!event.card || event.card.name !== "sha") return false;
+					if (event.player === player) return false;
+					return true;
+				},
+				async content(event, trigger, player) {
+					const source = trigger.player;
+					if (!source || !source.isIn()) return;
+					const result = await player
+						.chooseBool("擎盾：是否对" + get.translation(source) + "使用一张杀？")
+						.set("ai", () => get.attitude(player, source) < 0 ? 1 : 0)
+						.forResult();
+					if (result.bool) {
+						player.logSkill("qingdun", source);
+						await player.chooseToUse({
+							filterCard(card, player) {
+								if (get.itemtype(card) === "card" && get.position(card) !== "h") return false;
+								return (card.name === "sha" || card.name === "shan") && lib.filter.cardEnabled(card, player);
+							},
+							filterTarget(card, player, target) {
+								return target === source;
+							},
+							prompt: "擎盾：对" + get.translation(source) + "使用一张杀",
+							addCount: false,
+						});
+					}
+				},
+			},
+			reset: {
+				trigger: { player: "roundStart" },
+				forced: true,
+				silent: true,
+				content() {
+					delete player.storage.qingdun_prevented;
+				},
+			},
 		},
 	},
 };

@@ -30,7 +30,7 @@ const character = {
 		hp: 4,
 		maxHp: 4,
 		hujia: 1,
-		// skills: ["gongfang"],
+		skills: ["gongfang"],
 	},
 	xiaohuihui: {
 		sex: "female",

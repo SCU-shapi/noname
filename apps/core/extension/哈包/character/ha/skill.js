@@ -49,38 +49,43 @@ const skill = {
 	},
 	// 肃纪 - 出牌阶段限一次，你可以观看任意一名角色的手牌，重铸其中任意数量的牌。该技能使用时不会触发其他任何技能的效果。
 	suji: {
-		audio: 2, // 技能音频数量
-		enable: "phaseUse", // 在出牌阶段发动
-		usable: 1, // 每回合限用一次
-		// 目标过滤：只能选择有手牌的角色（包括自己）
+		audio: 2,
+		enable: "phaseUse",
+		usable: 1,
 		filterTarget(card, player, target) {
 			return target.countCards("h") > 0;
 		},
-		// 技能效果内容
+		group: ["suji_lock"],
+		subSkill: {
+			lock: {
+				trigger: { player: "useSkillBefore" },
+				firstDo: true,
+				priority: Infinity,
+				charlotte: true,
+				silent: true,
+				filter(event, player) {
+					return event.skill === "suji";
+				},
+				async content(event, trigger, player) {
+					game.players.concat(game.dead).forEach(p => trigger._notrigger.add(p));
+				},
+			},
+		},
 		async content(event, trigger, player) {
-			const target = event.target; // 获取技能目标
-			player.logSkill("suji"); // 记录技能使用日志
-			
-			// 获取目标的所有手牌
+			const target = event.target;
+			player.logSkill("suji");
 			const handCards = target.getCards("h");
-			if (handCards.length === 0) {
-				return; // 如果没有手牌，直接返回
-			}
-			
-			// 让玩家选择要重铸的牌（可见手牌，可选择0到多张）
+			if (handCards.length === 0) return;
 			const result = await player.choosePlayerCard({
-				target, // 目标角色
-				position: "h", // 选择手牌区的牌
-				visible: true, // 手牌可见（可以看到牌面）
-				selectButton: [0, Infinity], // 可以选择0到无限张牌
-				prompt: `肃纪：选择${get.translation(target)}的手牌进行重铸（可选多张）`, // 提示文本
-				filterButton: card => target.canRecast(card), // 过滤：只能选择可以重铸的牌
-				allowChooseAll: true, // 允许全选
+				target,
+				position: "h",
+				visible: true,
+				selectButton: [0, Infinity],
+				prompt: `肃纪：选择${get.translation(target)}的手牌进行重铸（可选多张）`,
+				filterButton: card => target.canRecast(card),
+				allowChooseAll: true,
 			}).forResult();
-			
-			// 如果选择了牌，则执行重铸
 			if (result.cards?.length) {
-				// 重铸选中的牌，传入null参数确保不触发其他技能效果
 				await target.recast(result.cards, null, null);
 			}
 		},
